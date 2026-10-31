@@ -5,11 +5,19 @@ import "core:fmt"
 import "core:os"
 import "core:log"
 import "core:strings"
+import "core:sync"
 import "core:sys/posix"
 import "core:testing"
 
+// One at a time: each of these opens descriptors, or reads which are open
+// and what a number holds, and the runner runs tests in threads of one process.
+process_tests: sync.Mutex
+
 @(test)
 test_process_exec :: proc(t: ^testing.T) {
+	sync.mutex_lock(&process_tests)
+	defer sync.mutex_unlock(&process_tests)
+
 	state, stdout, stderr, err := os.process_exec({
 		command = {"echo", "hellope"},
 	}, context.allocator)
@@ -35,6 +43,9 @@ test_process_exec :: proc(t: ^testing.T) {
 // it (sh redirects only single-digit ones).
 @(test)
 test_process_start_leaks_no_descriptor :: proc(t: ^testing.T) {
+	sync.mutex_lock(&process_tests)
+	defer sync.mutex_unlock(&process_tests)
+
 	want := strings.builder_make(context.allocator)
 	defer strings.builder_destroy(&want)
 	for fd in 3 ..= 9 {
@@ -65,19 +76,20 @@ test_process_start_leaks_no_descriptor :: proc(t: ^testing.T) {
 // Broken_Pipe, ends instead of spinning.
 @(test)
 test_pipe_has_data_on_a_closed_descriptor :: proc(t: ^testing.T) {
-	r, w, err := os.pipe()
-	if !testing.expect_value(t, err, nil) {
+	sync.mutex_lock(&process_tests)
+	defer sync.mutex_unlock(&process_tests)
+
+	// A number no open in another test's thread takes: those get the lowest free.
+	null := posix.open("/dev/null", {.CLOEXEC})
+	fd := posix.fcntl(null, .DUPFD_CLOEXEC, i32(200))
+	posix.close(null)
+	if !testing.expect(t, fd != -1, "dup failed") {
 		return
 	}
-	defer os.close(w)
-	fd := posix.FD(os.fd(r))
-	posix.close(fd)
+	r := os.new_file(uintptr(fd), "closed")
+	defer os.close(r)
+	posix.close(posix.FD(fd))
 	has_data, perr := os.pipe_has_data(r)
-	// The number taken again, so the File's close below closes its own.
-	null := posix.open("/dev/null", {})
-	posix.dup2(null, fd)
-	posix.close(null)
-	os.close(r)
 	testing.expect_value(t, has_data, false)
 	testing.expectf(t, perr != nil, "a closed descriptor reads as an empty pipe (err %v)", perr)
 }
