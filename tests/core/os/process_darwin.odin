@@ -24,6 +24,9 @@ count_fork :: proc "c" () {
 // handlers, before the exec, so process_start starts the program without one.
 @(test)
 test_process_start_takes_no_fork :: proc(t: ^testing.T) {
+	sync.mutex_lock(&process_tests)
+	defer sync.mutex_unlock(&process_tests)
+
 	testing.expect_value(t, pthread_atfork(count_fork, nil, nil), 0)
 	before := sync.atomic_load(&forks)
 
@@ -45,6 +48,9 @@ exec :: proc(t: ^testing.T, desc: os.Process_Desc) -> (state: os.Process_State, 
 
 @(test)
 test_process_start_working_dir :: proc(t: ^testing.T) {
+	sync.mutex_lock(&process_tests)
+	defer sync.mutex_unlock(&process_tests)
+
 	state, stdout, _, err := exec(t, {working_dir = "/bin", command = {"/bin/sh", "-c", "pwd -P"}})
 	testing.expect_value(t, err, nil)
 	testing.expect_value(t, state.success, true)
@@ -53,12 +59,18 @@ test_process_start_working_dir :: proc(t: ^testing.T) {
 
 @(test)
 test_process_start_reports_what_exec_and_chdir_refuse :: proc(t: ^testing.T) {
+	sync.mutex_lock(&process_tests)
+	defer sync.mutex_unlock(&process_tests)
+
 	_, err := os.process_start({working_dir = "/no/such/directory", command = {"/usr/bin/true"}})
 	testing.expect_value(t, err, os.Error(posix.Errno.ENOENT))
 }
 
 @(test)
 test_process_start_passes_the_environment :: proc(t: ^testing.T) {
+	sync.mutex_lock(&process_tests)
+	defer sync.mutex_unlock(&process_tests)
+
 	_, stdout, _, err := exec(t, {command = {"/bin/sh", "-c", "echo $A"}, env = {"A=b"}})
 	testing.expect_value(t, err, nil)
 	testing.expect_value(t, stdout, "b\n")
@@ -68,6 +80,9 @@ test_process_start_passes_the_environment :: proc(t: ^testing.T) {
 // parent's fd 0, which the child's own stdin replaces.
 @(test)
 test_process_start_stream_on_another_streams_number :: proc(t: ^testing.T) {
+	sync.mutex_lock(&process_tests)
+	defer sync.mutex_unlock(&process_tests)
+
 	in_r, in_w, ierr := os.pipe()
 	out_r, out_w, oerr := os.pipe()
 	testing.expect_value(t, ierr, nil)
@@ -97,6 +112,9 @@ test_process_start_stream_on_another_streams_number :: proc(t: ^testing.T) {
 // A stream the description leaves out reads as /dev/null.
 @(test)
 test_process_start_left_out_stream :: proc(t: ^testing.T) {
+	sync.mutex_lock(&process_tests)
+	defer sync.mutex_unlock(&process_tests)
+
 	_, stdout, _, err := exec(t, {command = {"/bin/sh", "-c", "cat; echo end"}})
 	testing.expect_value(t, err, nil)
 	testing.expect_value(t, stdout, "end\n")
